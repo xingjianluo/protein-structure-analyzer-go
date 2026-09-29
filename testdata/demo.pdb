@@ -1,0 +1,17 @@
+HEADER    DEMO COMPLEX
+MODEL        1
+ATOM      1 N    GLY A   1       0.000   0.000   0.000  1.00
+ATOM      2 CA   GLY A   1       1.500   0.000   0.000  1.00
+ATOM      3 C    GLY A   1       2.500   1.000   0.000  1.00
+ATOM      4 CA  ALEU A   2       3.000   2.000   0.000  0.40
+ATOM      5 CA  BLEU A   2       3.200   2.100   0.000  0.60
+ATOM      6 CA   SER A  10A      5.000   3.000   0.000  1.00
+ATOM      7 CA   SER B   1       2.000   0.500   2.000  1.00
+ATOM      8 CB   SER B   1       2.500   1.000   3.000  1.00
+HETATM    9 ZN    ZN B   2       8.000   8.000   8.000  1.00
+ENDMDL
+MODEL        2
+ATOM     10 CA   GLY A   1       9.000   9.000   9.000  1.00
+ENDMDL
+ATOM     11  CA  GLY A   3
+END
