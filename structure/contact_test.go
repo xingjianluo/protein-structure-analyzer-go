@@ -76,7 +76,7 @@ func TestIncompleteResidueExcluded(t *testing.T) {
 	lines := []string{
 		atomLine(1, "CA", "", "GLY", "A", 1, "", 0, 0, 0, 1.0, false),
 		atomLine(2, "CB", "", "ALA", "A", 2, "", 0, 30.0, 0, 1.0, false), // 缺 CA -> Incomplete
-		atomLine(3, "CA", "", "SER", "B", 1, "", 0, 32.0, 0, 1.0, false),  // 仅与 A:2 在阈值内
+		atomLine(3, "CA", "", "SER", "B", 1, "", 0, 32.0, 0, 1.0, false), // 仅与 A:2 在阈值内
 	}
 	m, rep, err := ParsePDB("fixture", strings.NewReader(strings.Join(lines, "\n")+"\n"))
 	if err != nil {

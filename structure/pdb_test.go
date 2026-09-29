@@ -156,7 +156,7 @@ func TestParseMalformedAndTruncated(t *testing.T) {
 	_, rep, err := parse(t,
 		atomLine(1, "CA", "", "GLY", "A", 1, "", 0, 0, 0, 1.0, false),
 		"ATOM      2  CA  GLY A   1      xx.xxx   1.000   1.000  1.00", // 畸形坐标
-		"ATOM      3  CA  GLY A   1",                                    // 截断
+		"ATOM      3  CA  GLY A   1",                                   // 截断
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

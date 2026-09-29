@@ -159,14 +159,14 @@ func ParsePDB(source string, r io.Reader) (*Model, *ParseReport, error) {
 		}
 
 		at := &Atom{
-			Serial:    serial,
-			Name:      col(line, 13, 16),
-			AltLoc:    col(line, 17, 17),
-			ResName:   col(line, 18, 20),
-			ChainID:   col(line, 22, 22),
-			ResSeq:    resSeq,
-			ICode:     col(line, 27, 27),
-			X:         x, Y: y, Z: z,
+			Serial:  serial,
+			Name:    col(line, 13, 16),
+			AltLoc:  col(line, 17, 17),
+			ResName: col(line, 18, 20),
+			ChainID: col(line, 22, 22),
+			ResSeq:  resSeq,
+			ICode:   col(line, 27, 27),
+			X:       x, Y: y, Z: z,
 			Occupancy: occ,
 			Element:   col(line, 77, 78),
 			Het:       rec == "HETATM",
