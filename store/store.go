@@ -4,6 +4,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/xingjianluo/protein-structure-analyzer-go/compare"
 	"github.com/xingjianluo/protein-structure-analyzer-go/contact"
 	"github.com/xingjianluo/protein-structure-analyzer-go/structure"
 )
@@ -41,12 +42,17 @@ type EntryState struct {
 
 // Snapshot is an immutable load+analysis result.
 type Snapshot struct {
-	Version  int
-	State    LoadState
-	Paths    []string
-	Reports  map[string]*contact.InterfaceReport
-	Entries  map[string]*EntryState
-	Warnings map[string][]structure.Issue
+	Version int
+	State   LoadState
+	Paths   []string
+	Options contact.Options
+	Reports map[string]*contact.InterfaceReport
+	// Comparison is the cross-structure interface diff of this batch. Its
+	// Fingerprint identifies options+inputs; any change of either yields a
+	// new snapshot with a different fingerprint.
+	Comparison *compare.Result
+	Entries    map[string]*EntryState
+	Warnings   map[string][]structure.Issue
 }
 
 // Store keeps the latest successfully committed snapshot behind an RWMutex.
@@ -77,10 +83,19 @@ func classifyEntry(s *structure.Structure, parseErr error) (LoadState, []structu
 	return StateOK, s.Warnings, ""
 }
 
-// Load parses and analyzes the given local paths and atomically replaces the
-// current snapshot. On any failure the previous snapshot is retained and a
-// *ReloadError is returned; concurrent readers never see a partial update.
+// Load parses and analyzes the given local paths with default options and
+// atomically replaces the current snapshot. See LoadWithOptions.
 func (st *Store) Load(paths []string) error {
+	return st.LoadWithOptions(paths, contact.DefaultOptions())
+}
+
+// LoadWithOptions parses and analyzes the given local paths under opts and
+// atomically replaces the current snapshot. On any failure the previous
+// snapshot is retained and a *ReloadError is returned; concurrent readers
+// never see a partial update. The committed snapshot carries opts and the
+// batch comparison, so a change of switch/selection or of the input set is
+// always reflected in a new snapshot and never served from the old one.
+func (st *Store) LoadWithOptions(paths []string, opts contact.Options) error {
 	// Serialize load attempts; readers are not blocked during parsing.
 	st.loadMu.Lock()
 	defer st.loadMu.Unlock()
@@ -103,7 +118,7 @@ func (st *Store) Load(paths []string) error {
 			worst = StateError
 			continue
 		}
-		rep, aerr := st.analyzer.Analyze(s)
+		rep, aerr := st.analyzer.AnalyzeWithOptions(s, opts)
 		if aerr != nil {
 			entries[path] = &EntryState{Source: path, State: StateError, Error: aerr.Error()}
 			failures = append(failures, path+": "+aerr.Error())
@@ -138,12 +153,14 @@ func (st *Store) Load(paths []string) error {
 	st.mu.Lock()
 	st.version++
 	snap := &Snapshot{
-		Version:  st.version,
-		State:    worst,
-		Paths:    sortedPaths,
-		Reports:  reports,
-		Entries:  entries,
-		Warnings: warningsBySource,
+		Version:    st.version,
+		State:      worst,
+		Paths:      sortedPaths,
+		Options:    opts,
+		Reports:    reports,
+		Comparison: compare.FromReports(opts, reports),
+		Entries:    entries,
+		Warnings:   warningsBySource,
 	}
 	st.current = snap
 	st.mu.Unlock()

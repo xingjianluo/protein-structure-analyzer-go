@@ -64,15 +64,45 @@ func canonicalChainOrder(a, b string) (string, string) {
 	return b, a
 }
 
-// Analyze computes the interface report. The result depends solely on the
-// structure content: chains are processed in model order, and the output
-// lists are sorted into a canonical order.
+// Analyze computes the interface report with DefaultOptions: non-standard
+// records (HETATM, modified residues, metal ions) are excluded and every
+// chain participates. Use AnalyzeWithOptions to change that.
 func (a *Analyzer) Analyze(s *structure.Structure) (*InterfaceReport, error) {
+	return a.AnalyzeWithOptions(s, DefaultOptions())
+}
+
+// AnalyzeWithOptions computes the interface report restricted by opts:
+// non-standard residues are excluded unless opts.IncludeHetero is set, and
+// only the selected chains participate when opts.Chains is non-empty. The
+// result depends solely on the structure content and opts: chains are
+// processed in model order, and the output lists are sorted into a canonical
+// order.
+func (a *Analyzer) AnalyzeWithOptions(s *structure.Structure, opts Options) (*InterfaceReport, error) {
 	if s == nil || s.Effective == nil {
 		return nil, ErrEmptyStructure
 	}
+	norm := opts.normalized()
+	if norm.Cutoff != a.cutoff {
+		// Per-call cutoff overrides the analyzer default without mutation.
+		a = &Analyzer{cutoff: norm.Cutoff}
+	}
+	allow := norm.chainSet()
 	rep := &InterfaceReport{Source: s.Source, Model: s.Effective.Serial, Cutoff: a.cutoff}
-	chains := s.Effective.Chains
+	var chains []*structure.Chain
+	for _, c := range s.Effective.Chains {
+		if allow == nil || allow[c.ID] {
+			chains = append(chains, c)
+		}
+	}
+	usable := func(r *structure.Residue) bool {
+		if !r.UsableForContact() {
+			return false
+		}
+		if !norm.IncludeHetero && (r.Hetero || !r.IsStandardAA) {
+			return false
+		}
+		return true
+	}
 	type agg struct {
 		count int
 		min   float64
@@ -83,11 +113,11 @@ func (a *Analyzer) Analyze(s *structure.Structure) (*InterfaceReport, error) {
 		for j := i + 1; j < len(chains); j++ {
 			ci, cj := chains[i], chains[j]
 			for _, ri := range ci.Residues {
-				if !ri.UsableForContact() {
+				if !usable(ri) {
 					continue
 				}
 				for _, rj := range cj.Residues {
-					if !rj.UsableForContact() {
+					if !usable(rj) {
 						continue
 					}
 					d := ResidueMinDistance(ri, rj)
