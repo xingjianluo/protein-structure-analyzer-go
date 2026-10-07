@@ -356,7 +356,7 @@ func ParsePDB(r io.Reader, source string) (*Structure, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, &ParseError{Source: source, Reason: "read error: " + err.Error()}
+		return nil, &ParseError{Source: source, Reason: "read error: " + err.Error(), Kind: ParseErrIO}
 	}
 	if !seenModel {
 		finish()
@@ -365,10 +365,10 @@ func ParsePDB(r io.Reader, source string) (*Structure, error) {
 		first = current
 	}
 	if atomCount == 0 {
-		return nil, &ParseError{Source: source, Reason: "no ATOM/HETATM records found"}
+		return nil, &ParseError{Source: source, Reason: "no ATOM/HETATM records found", Kind: ParseErrContent}
 	}
 	if first == nil || len(first.chains) == 0 {
-		return nil, &ParseError{Source: source, Reason: "no usable atomic records in first model"}
+		return nil, &ParseError{Source: source, Reason: "no usable atomic records in first model", Kind: ParseErrContent}
 	}
 	s.Models = append(s.Models, finalize(first, &s.Warnings))
 	s.Effective = s.Models[0]
@@ -385,12 +385,12 @@ func ParsePDB(r io.Reader, source string) (*Structure, error) {
 func ParsePDBFile(path string) (*Structure, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, &ParseError{Source: path, Reason: "cannot open file: " + err.Error()}
+		return nil, &ParseError{Source: path, Reason: "cannot open file: " + err.Error(), Kind: ParseErrIO}
 	}
 	defer f.Close()
 	data, err := io.ReadAll(f)
 	if err != nil {
-		return nil, &ParseError{Source: path, Reason: "read error: " + err.Error()}
+		return nil, &ParseError{Source: path, Reason: "read error: " + err.Error(), Kind: ParseErrIO}
 	}
 	return ParsePDB(bytes.NewReader(data), path)
 }

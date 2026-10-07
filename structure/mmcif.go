@@ -89,7 +89,7 @@ func mmcifCol(headers map[string]int, names ...string) int {
 func ParseMMCIF(r io.Reader, source string) (*Structure, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return nil, &ParseError{Source: source, Reason: "read error: " + err.Error()}
+		return nil, &ParseError{Source: source, Reason: "read error: " + err.Error(), Kind: ParseErrIO}
 	}
 	toks := tokenizeMMCIF(data)
 	s := &Structure{Source: source}
@@ -230,7 +230,7 @@ func ParseMMCIF(r io.Reader, source string) (*Structure, error) {
 		}
 	}
 	if atomCount == 0 {
-		return nil, &ParseError{Source: source, Reason: "no _atom_site rows found"}
+		return nil, &ParseError{Source: source, Reason: "no _atom_site rows found", Kind: ParseErrContent}
 	}
 	sort.Ints(modelSerials)
 	if len(modelSerials) > 1 {
@@ -254,12 +254,12 @@ func ParseMMCIF(r io.Reader, source string) (*Structure, error) {
 func ParseMMCIFFile(path string) (*Structure, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, &ParseError{Source: path, Reason: "cannot open file: " + err.Error()}
+		return nil, &ParseError{Source: path, Reason: "cannot open file: " + err.Error(), Kind: ParseErrIO}
 	}
 	defer f.Close()
 	data, err := io.ReadAll(f)
 	if err != nil {
-		return nil, &ParseError{Source: path, Reason: "read error: " + err.Error()}
+		return nil, &ParseError{Source: path, Reason: "read error: " + err.Error(), Kind: ParseErrIO}
 	}
 	return ParseMMCIF(bytes.NewReader(data), path)
 }

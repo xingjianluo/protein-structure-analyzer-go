@@ -79,15 +79,33 @@ func (a *Analyzer) Analyze(s *structure.Structure) (*InterfaceReport, error) {
 	}
 	ifaceAgg := map[string]*agg{}
 
+	// Pre-filter support: per-chain bounding boxes of usable residues let us
+	// skip residue pairs that cannot possibly be within the cutoff. This
+	// keeps large structures (thousands of residues per chain) tractable
+	// without changing any result.
+	type boxedResidue struct {
+		r   *structure.Residue
+		box bbox
+	}
+	boxed := make([][]boxedResidue, len(chains))
+	for i, ch := range chains {
+		for _, r := range ch.Residues {
+			if !r.UsableForContact() {
+				continue
+			}
+			boxed[i] = append(boxed[i], boxedResidue{r: r, box: residueBBox(r)})
+		}
+	}
+	cut2 := a.cutoff * a.cutoff
+
 	for i := 0; i < len(chains); i++ {
 		for j := i + 1; j < len(chains); j++ {
 			ci, cj := chains[i], chains[j]
-			for _, ri := range ci.Residues {
-				if !ri.UsableForContact() {
-					continue
-				}
-				for _, rj := range cj.Residues {
-					if !rj.UsableForContact() {
+			for _, bi := range boxed[i] {
+				ri := bi.r
+				for _, bj := range boxed[j] {
+					rj := bj.r
+					if bboxDist2(bi.box, bj.box) > cut2 {
 						continue
 					}
 					d := ResidueMinDistance(ri, rj)

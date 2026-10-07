@@ -1,9 +1,14 @@
 package store
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"os"
 	"sort"
 	"sync"
 
+	"github.com/xingjianluo/protein-structure-analyzer-go/compare"
 	"github.com/xingjianluo/protein-structure-analyzer-go/contact"
 	"github.com/xingjianluo/protein-structure-analyzer-go/structure"
 )
@@ -39,7 +44,7 @@ type EntryState struct {
 	Error    string
 }
 
-// Snapshot is an immutable load+analysis result.
+// Snapshot is an immutable load+analysis+comparison result.
 type Snapshot struct {
 	Version  int
 	State    LoadState
@@ -47,6 +52,14 @@ type Snapshot struct {
 	Reports  map[string]*contact.InterfaceReport
 	Entries  map[string]*EntryState
 	Warnings map[string][]structure.Issue
+	// Options echoes the normalized comparison options used for this
+	// snapshot, so callers can verify which switches a result belongs to.
+	Options compare.Options
+	// Comparison is the cross-structure interface comparison of this batch.
+	Comparison *compare.Report
+	// Fingerprint identifies the exact input set (paths + file content).
+	// Any change to the data produces a different fingerprint.
+	Fingerprint string
 }
 
 // Store keeps the latest successfully committed snapshot behind an RWMutex.
@@ -56,6 +69,8 @@ type Store struct {
 	mu       sync.RWMutex
 	current  *Snapshot
 	analyzer *contact.Analyzer
+	comparer *compare.Comparer
+	opts     compare.Options
 	version  int
 }
 
@@ -64,7 +79,24 @@ func New(a *contact.Analyzer) *Store {
 	if a == nil {
 		a = contact.NewAnalyzer(contact.DefaultCutoff)
 	}
-	return &Store{analyzer: a}
+	return &Store{analyzer: a, comparer: compare.NewComparer(a.Cutoff())}
+}
+
+// SetOptions replaces the comparison options used by subsequent Load calls.
+// It never mutates the committed snapshot: the new switches take effect only
+// after a successful reload, so a committed result always matches its own
+// Snapshot.Options.
+func (st *Store) SetOptions(o compare.Options) {
+	st.mu.Lock()
+	st.opts = o
+	st.mu.Unlock()
+}
+
+// Options returns the options that will be used by the next Load.
+func (st *Store) Options() compare.Options {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.opts
 }
 
 func classifyEntry(s *structure.Structure, parseErr error) (LoadState, []structure.Issue, string) {
@@ -77,37 +109,75 @@ func classifyEntry(s *structure.Structure, parseErr error) (LoadState, []structu
 	return StateOK, s.Warnings, ""
 }
 
-// Load parses and analyzes the given local paths and atomically replaces the
-// current snapshot. On any failure the previous snapshot is retained and a
-// *ReloadError is returned; concurrent readers never see a partial update.
+// failureKind maps a parse/analysis error to a typed failure kind.
+func failureKind(err error) FailureKind {
+	var pe *structure.ParseError
+	if errors.As(err, &pe) {
+		switch pe.Kind {
+		case structure.ParseErrIO:
+			return FailureIO
+		case structure.ParseErrContent:
+			return FailureParse
+		}
+	}
+	return FailureAnalysis
+}
+
+// Load parses, analyzes and compares the given local paths and atomically
+// replaces the current snapshot. On any failure the previous snapshot is
+// retained and a *ReloadError is returned; concurrent readers never see a
+// partial update.
 func (st *Store) Load(paths []string) error {
 	// Serialize load attempts; readers are not blocked during parsing.
 	st.loadMu.Lock()
 	defer st.loadMu.Unlock()
+
+	st.mu.RLock()
+	opts := st.opts
+	st.mu.RUnlock()
+
 	// Build the entire new snapshot off-lock, then swap once.
 	sortedPaths := append([]string{}, paths...)
 	sort.Strings(sortedPaths)
 
+	h := sha256.New()
 	reports := map[string]*contact.InterfaceReport{}
 	entries := map[string]*EntryState{}
 	warningsBySource := map[string][]structure.Issue{}
+	structs := map[string]*structure.Structure{}
 	worst := StateOK
-	var failures []string
+	var failures []EntryFailure
 
 	for _, path := range sortedPaths {
-		s, perr := structure.ParseFile(path)
+		data, rerr := os.ReadFile(path)
+		if rerr != nil {
+			failures = append(failures, EntryFailure{
+				Path: path, Kind: FailureIO, Message: rerr.Error(),
+			})
+			entries[path] = &EntryState{Source: path, State: StateError, Error: rerr.Error()}
+			continue
+		}
+		// Fingerprint depends only on the (sorted) set of path+content.
+		h.Write([]byte(path))
+		h.Write([]byte{0})
+		h.Write(data)
+		h.Write([]byte{0})
+
+		s, perr := structure.ParseBytes(data, path)
 		state, warns, errMsg := classifyEntry(s, perr)
 		if perr != nil {
 			entries[path] = &EntryState{Source: path, State: StateError, Error: errMsg}
-			failures = append(failures, path+": "+errMsg)
-			worst = StateError
+			failures = append(failures, EntryFailure{
+				Path: path, Kind: failureKind(perr), Message: errMsg,
+			})
 			continue
 		}
 		rep, aerr := st.analyzer.Analyze(s)
 		if aerr != nil {
 			entries[path] = &EntryState{Source: path, State: StateError, Error: aerr.Error()}
-			failures = append(failures, path+": "+aerr.Error())
-			worst = StateError
+			failures = append(failures, EntryFailure{
+				Path: path, Kind: FailureAnalysis, Message: aerr.Error(),
+			})
 			continue
 		}
 		if state == StateDegraded && worst != StateError {
@@ -116,6 +186,7 @@ func (st *Store) Load(paths []string) error {
 		entries[path] = &EntryState{Source: path, State: state, Warnings: warns}
 		reports[path] = rep
 		warningsBySource[path] = warns
+		structs[path] = s
 	}
 
 	if len(failures) > 0 {
@@ -135,15 +206,43 @@ func (st *Store) Load(paths []string) error {
 		}
 	}
 
+	// Cross-structure comparison over every parsed input. Degraded inputs
+	// are classified and excluded inside compare, never silently compared.
+	inputs := make([]compare.Input, 0, len(structs))
+	for _, p := range sortedPaths {
+		if s, ok := structs[p]; ok {
+			inputs = append(inputs, compare.Input{ID: p, Struct: s})
+		}
+	}
+	comparison, cerr := st.comparer.Compare(inputs, opts)
+	if cerr != nil {
+		st.mu.RLock()
+		prevVersion := 0
+		if st.current != nil {
+			prevVersion = st.current.Version
+		}
+		st.mu.RUnlock()
+		return &ReloadError{
+			AttemptedPaths: sortedPaths,
+			Version:        prevVersion,
+			Retained:       st.current != nil,
+			Reason:         "comparison failed; previous snapshot retained",
+			Failures:       []EntryFailure{{Path: "", Kind: FailureAnalysis, Message: cerr.Error()}},
+		}
+	}
+
 	st.mu.Lock()
 	st.version++
 	snap := &Snapshot{
-		Version:  st.version,
-		State:    worst,
-		Paths:    sortedPaths,
-		Reports:  reports,
-		Entries:  entries,
-		Warnings: warningsBySource,
+		Version:     st.version,
+		State:       worst,
+		Paths:       sortedPaths,
+		Reports:     reports,
+		Entries:     entries,
+		Warnings:    warningsBySource,
+		Options:     comparison.Options,
+		Comparison:  comparison,
+		Fingerprint: hex.EncodeToString(h.Sum(nil)),
 	}
 	st.current = snap
 	st.mu.Unlock()

@@ -2,6 +2,41 @@ package store
 
 import "strings"
 
+// FailureKind distinguishes why one input failed, so callers can react by
+// type instead of matching message text.
+type FailureKind int
+
+const (
+	FailureUnknown FailureKind = iota
+	// FailureIO: the file could not be opened or read.
+	FailureIO
+	// FailureParse: the content could not be parsed into a structure
+	// (including files whose coordinate columns are entirely unreadable).
+	FailureParse
+	// FailureAnalysis: the file parsed but interface analysis failed.
+	FailureAnalysis
+)
+
+func (k FailureKind) String() string {
+	switch k {
+	case FailureIO:
+		return "io"
+	case FailureParse:
+		return "parse"
+	case FailureAnalysis:
+		return "analysis"
+	default:
+		return "unknown"
+	}
+}
+
+// EntryFailure is one typed per-file failure inside a ReloadError.
+type EntryFailure struct {
+	Path    string
+	Kind    FailureKind
+	Message string
+}
+
 // ReloadError reports a failed reload. It is distinguishable from normal
 // operation by type and carries both the reason and the retained version.
 type ReloadError struct {
@@ -9,7 +44,8 @@ type ReloadError struct {
 	Version        int
 	Retained       bool
 	Reason         string
-	Failures       []string
+	// Failures lists every failed input with a typed kind.
+	Failures []EntryFailure
 }
 
 func (e *ReloadError) Error() string {
@@ -20,7 +56,11 @@ func (e *ReloadError) Error() string {
 		base += " (no previous snapshot available)"
 	}
 	if len(e.Failures) > 0 {
-		base += ": " + strings.Join(e.Failures, "; ")
+		parts := make([]string, 0, len(e.Failures))
+		for _, f := range e.Failures {
+			parts = append(parts, f.Path+"["+f.Kind.String()+"]: "+f.Message)
+		}
+		base += ": " + strings.Join(parts, "; ")
 	}
 	return base
 }

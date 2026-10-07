@@ -118,10 +118,24 @@ func (i Issue) String() string {
 	return fmt.Sprintf("%s (line %d%s): %s", i.Kind, i.Line, i.Where, i.Message)
 }
 
+// ParseErrorKind distinguishes why parsing failed, so callers can react by
+// type instead of matching message text.
+type ParseErrorKind int
+
+const (
+	ParseErrUnknown ParseErrorKind = iota
+	// ParseErrIO: the file could not be opened or read.
+	ParseErrIO
+	// ParseErrContent: the content could not be parsed into a structure
+	// (e.g. no coordinate records at all).
+	ParseErrContent
+)
+
 // ParseError is returned when input cannot be turned into a usable structure.
 type ParseError struct {
 	Source string
 	Reason string
+	Kind   ParseErrorKind
 }
 
 func (e *ParseError) Error() string {
